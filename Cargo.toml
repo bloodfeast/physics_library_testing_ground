@@ -1,0 +1,8 @@
+[package]
+name = "physics_library_testing_ground"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = "0.15"
+rs_physics = { git = "https://github.com/bloodfeast/rs_physics", features = ["all"] }
