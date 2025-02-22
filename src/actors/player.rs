@@ -1,14 +1,10 @@
-use std::cmp::{max, min};
-use std::thread::spawn;
-use bevy::input::InputSystem;
+use std::thread::{sleep, spawn};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use bevy::text::cosmic_text::rustybuzz::Direction;
+use bevy::tasks::futures_lite::stream::iter;
 use rs_physics::forces::Force;
-use rs_physics::interactions::apply_force;
-use rs_physics::models::{Direction2D, FromCoordinates, ObjectIn2D, ToCoordinates};
-use rs_physics::physics::calculate_terminal_velocity;
+use rs_physics::models::ObjectIn2D;
 use rs_physics::utils::{DEFAULT_PHYSICS_CONSTANTS, PhysicsConstants};
 
 const GROUND_LEVEL: f64 = -100.0;
@@ -22,7 +18,7 @@ impl PhysicsSystem2D {
         // (the DEFAULT_PHYSICS_CONSTANTS.gravity is a positive f64)
         let constants = PhysicsConstants {
             gravity: -constants.gravity,
-            ground_level: GROUND_LEVEL,
+            ground_level: GROUND_LEVEL + 30.0,
             ..DEFAULT_PHYSICS_CONSTANTS
         };
         let mut physics_system = rs_physics::forces::PhysicsSystem2D::new(constants);
@@ -37,21 +33,35 @@ impl PhysicsSystem2D {
 #[derive(Component)]
 pub struct Player;
 
-pub fn setup_player(mut commands: Commands) {
-    commands.spawn(Camera2d::default());
+
+
+pub fn setup_player(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    commands.spawn(
+        Camera2d {
+            ..default()
+        }
+    );
 
     // Player
-    let player_object = ObjectIn2D::new(65.0, 0.0, (0.0, 0.0), (-200.0, GROUND_LEVEL));
+    let player_object = ObjectIn2D::new(65.0, 0.0, (0.0, 0.0), (-200.0, GROUND_LEVEL + 100.0));
+    let color = Color::srgb(0.5, 1.0, 0.5);
+
     commands
         .spawn((
             Player,
-            Sprite {
-                color: Color::srgb(0.5, 1.0, 0.5),
-                custom_size: Some(Vec2::new(30.0, 50.0)),
-                anchor: Anchor::BottomCenter,
-                ..default()
+            Mesh2d(
+                meshes.add(Circle::new(30.0))
+            ),
+            MeshMaterial2d(materials.add(color)),
+            Transform {
+                translation: Vec3::new(-200.0, GROUND_LEVEL as f32 + 60.0, 0.0),
+                ..Default::default()
             },
-            Transform::from_xyz(-300.00, GROUND_LEVEL as f32, 0.0),
+            Anchor::BottomCenter,
             PhysicsSystem2D::new(DEFAULT_PHYSICS_CONSTANTS, player_object),
         ));
 
@@ -61,22 +71,71 @@ pub fn setup_player(mut commands: Commands) {
             color: Color::srgb(0.5, 0.5, 0.5),
             custom_size: Some(Vec2::new(800.0, 10.0)),
             anchor: Anchor::TopLeft,
+
             ..default()
         },
-        Transform::from_xyz(-400.0, GROUND_LEVEL as f32, 0.0)
+        Transform::from_xyz(-400.0, GROUND_LEVEL as f32, 0.0),
+    ));
+
+    // Ground
+    commands.spawn((
+        Sprite {
+            color: Color::srgb(0.5, 0.5, 0.5),
+            custom_size: Some(Vec2::new(800.0, 10.0)),
+            anchor: Anchor::TopLeft,
+            ..default()
+        },
+        Transform {
+            translation: Vec3::new(398.0, GROUND_LEVEL as f32, 0.0),
+            rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_8),
+            ..Default::default()
+        },
     ));
 }
 
+fn calculate_ground_level(x_pos: f64) -> f64 {
+    if x_pos > 398.0 {
+        let offset = x_pos - 398.0;
+        let angle = std::f64::consts::FRAC_PI_8;
+        return GROUND_LEVEL + 30.0 + offset * angle.tan();
+    }
+    GROUND_LEVEL + 30.0
+}
+
+pub fn camera_movement(
+    mut query: Query<(&Player, &Transform)>,
+    mut camera_query: Query<&mut Transform, (With<Camera2d>, Without<Player>)>,
+) {
+    if let (_, player_transform) = query.iter()
+        .next()
+        .expect("There should only be one player entity") {
+
+        if let mut camera_transform = camera_query.iter_mut()
+            .next()
+            .expect("There should only be one camera entity") {
+
+            camera_transform.translation.x = player_transform.translation.x * 0.5;
+            camera_transform.translation.y = player_transform.translation.y * 0.5;
+        }
+    }
+}
+
+
 pub fn player_movement(
-    mut player_query: Query<(&mut Transform, &mut PhysicsSystem2D), With<Player>>,
+    mut player_transform_query: Query<&mut Transform, With<Player>>,
+    mut player_query: Query<&mut PhysicsSystem2D>,
     time: Res<Time>,
 ) {
-    if let Ok((mut transform, mut physics_system)) =
+    let mut player_transform = player_transform_query.get_single_mut()
+        .expect("There should only be one player entity");
+    if let Ok(mut physics_system) =
         player_query.get_single_mut() {
 
+        physics_system.0.update_ground_level(calculate_ground_level(player_transform.translation.x as f64));
         physics_system.0.update(time.delta_secs_f64() * 60.0);
 
-        let mut player_obj = physics_system.0.get_object_mut(0).unwrap();
+
+        let player_obj = physics_system.0.get_object_mut(0).unwrap();
 
         player_obj.velocity = player_obj.velocity * 0.99;
         if player_obj.velocity.abs() < 0.5 {
@@ -84,20 +143,20 @@ pub fn player_movement(
             player_obj.direction.x = 0.0;
         }
 
-        if player_obj.position.x >= 400.0 || player_obj.position.x <= -400.0 {
-            player_obj.position.x = player_obj.position.x.clamp(-400.0, 400.0);
+        if player_obj.position.x >= 1100.0 || player_obj.position.x <= -400.0 {
+            player_obj.position.x = player_obj.position.x.clamp(-400.0, 1100.0);
             player_obj.direction.x = 0.0;
         }
 
-        transform.translation.x = player_obj.position.x as f32;
-        transform.translation.y = player_obj.position.y as f32;
+        player_transform.translation.x = player_obj.position.x as f32;
+        player_transform.translation.y = player_obj.position.y as f32;
 
     }
 }
 
 pub fn player_input(
     mut events: EventReader<KeyboardInput>,
-    mut player_query: Query<(&mut PhysicsSystem2D), With<Player>>,
+    mut player_query: Query<&mut PhysicsSystem2D, With<Player>>,
 ) {
 
     for e in events.read() {
@@ -105,8 +164,8 @@ pub fn player_input(
             player_query.get_single_mut() {
 
             if e.state.is_pressed() && e.key_code == KeyCode::Space {
-                let mut player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
-                if player_phys_obj.position.y == GROUND_LEVEL {
+                let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
+                if player_phys_obj.position.y <= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
 
                     // this is a bit hacky, but it makes the movement feel better.
                     if player_phys_obj.velocity.abs() <= 2.5 {
@@ -138,7 +197,7 @@ pub fn player_input(
                 }
             }
             if e.state.is_pressed() && e.key_code == KeyCode::KeyA {
-                let mut player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
+                let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
                 // Apply leftward thrust.
                 if e.repeat {
                     player_phys_obj.add_force(Force::Thrust { magnitude: 200.0, angle: std::f64::consts::PI });
@@ -147,7 +206,7 @@ pub fn player_input(
                 }
             }
             if e.state.is_pressed() && e.key_code == KeyCode::KeyD {
-                let mut player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
+                let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
                 // Apply rightward thrust.
                 if e.repeat {
                     player_phys_obj.add_force(Force::Thrust { magnitude: 200.0, angle: 0.0 });
