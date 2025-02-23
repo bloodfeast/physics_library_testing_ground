@@ -228,16 +228,29 @@ pub fn player_input(
         let left_tangent = (-tangent.0, -tangent.1);
         // Compute the angle from the left tangent vector.
         let angle = left_tangent.1.atan2(left_tangent.0);
+        let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
+            200.0
+        } else {
+            400.0
+        };
         // Apply thrust along this angle.
-        player_phys_obj.add_force(Force::Thrust { magnitude: 600.0, angle: angle as f64 });
+        player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
     }
 
     if keyboard_input.pressed(KeyCode::KeyD) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
+        if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
+            return;
+        }
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
         // Compute the angle from the tangent vector.
         let angle = tangent.1.atan2(tangent.0);
-        player_phys_obj.add_force(Force::Thrust { magnitude: 600.0, angle: angle as f64 });
+        let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
+            200.0
+        } else {
+            400.0
+        };
+        player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
 
     }
 }
