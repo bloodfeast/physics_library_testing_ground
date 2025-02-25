@@ -1,3 +1,4 @@
+use bevy::log::tracing_subscriber::fmt::time;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use rs_physics::forces::Force;
@@ -115,10 +116,10 @@ pub fn camera_movement(
 }
 
 
-pub fn player_movement(
+pub fn player_movement_physics (
     mut player_transform_query: Query<&mut Transform, With<Player>>,
     mut player_query: Query<&mut PhysicsSystem2D>,
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
 ) {
 
     let mut player_transform = player_transform_query.get_single_mut()
@@ -129,7 +130,7 @@ pub fn player_movement(
         let ground_level = calculate_ground_level(player_transform.translation.x as f64);
         physics_system.0.update_ground_level(ground_level);
 
-        physics_system.0.update(time.delta_secs_f64() * 60.0);
+        physics_system.0.update(time.delta_secs_f64() * 32.0);
 
         let ground_level = calculate_ground_level(player_transform.translation.x as f64);
         physics_system.0.update_ground_level(ground_level);
@@ -168,11 +169,27 @@ pub fn player_movement(
             player_obj.velocity = 0.0;
         }
 
-        player_transform.translation.x = player_obj.position.x as f32;
-        player_transform.translation.y = player_obj.position.y as f32;
 
     }
 }
+
+pub fn update_player_movement(
+    mut player_transform_query: Query<&mut Transform, With<Player>>,
+    mut player_query: Query<&mut PhysicsSystem2D>,
+) {
+
+    let mut player_transform = player_transform_query.get_single_mut()
+        .expect("There should only be one player entity");
+    if let Ok(mut physics_system) =
+        player_query.get_single_mut() {
+
+        let player_obj = physics_system.0.get_object_mut(0).unwrap();
+
+        player_transform.translation.x = player_obj.position.x as f32;
+        player_transform.translation.y = player_obj.position.y as f32;
+    }
+}
+
 fn ground_tangent(x_pos: f32) -> (f32, f32) {
     // Assume that for x > 398, the ground is sloped with an angle of FRAC_PI_8.
     if x_pos > 396.54 {
@@ -204,7 +221,7 @@ pub fn player_input(
             // Subtract offset from π/2 so that if x > 0, jump tilts right (angle becomes < π/2)
             // and if x < 0, jump tilts left (angle becomes > π/2).
             let thrust_angle = std::f64::consts::FRAC_PI_2 - angle_offset;
-            let base_magnitude = 9600.0;
+            let base_magnitude = DEFAULT_PHYSICS_CONSTANTS.gravity.powi(4);
             // the only issue with this is that it takes away from the vertical thrust.
             // this can be fixed by increasing the magnitude of the thrust.
             // which is why the magnitude is doubled when x != 0.
@@ -223,15 +240,18 @@ pub fn player_input(
     }
     if keyboard_input.pressed(KeyCode::KeyA) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
+        if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 2.5 {
+            return;
+        }
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
         // For leftward movement, reverse the tangent.
         let left_tangent = (-tangent.0, -tangent.1);
         // Compute the angle from the left tangent vector.
         let angle = left_tangent.1.atan2(left_tangent.0);
         let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            200.0
+            DEFAULT_PHYSICS_CONSTANTS.gravity.powi(2) + 200.0
         } else {
-            400.0
+            DEFAULT_PHYSICS_CONSTANTS.gravity.powi(2) + 300.0
         };
         // Apply thrust along this angle.
         player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
@@ -239,16 +259,16 @@ pub fn player_input(
 
     if keyboard_input.pressed(KeyCode::KeyD) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
-        if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
+        if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 2.5 {
             return;
         }
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
         // Compute the angle from the tangent vector.
         let angle = tangent.1.atan2(tangent.0);
         let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            200.0
+            DEFAULT_PHYSICS_CONSTANTS.gravity.powi(2) + 200.0
         } else {
-            400.0
+            DEFAULT_PHYSICS_CONSTANTS.gravity.powi(2) + 300.0
         };
         player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
 
