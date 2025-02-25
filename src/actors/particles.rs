@@ -20,13 +20,13 @@ pub fn setup(
     };
 
     let mut sim = Simulation::new(
-        14_000,               // number of particles
+        15_000,               // number of particles
         (0.0, 0.0),         // initial position
         200.0 / std::f64::consts::PI,               // initial speed
         (0.0, 0.25),         // initial direction
         0.15,                // mass
         constants,
-        0.0016,              // time step (0.016 is essentially slowing down the simulation, ~0.16 looks more natural imo)
+        0.0016,              // time step (0.0016 is essentially slowing down the simulation, ~0.16 looks more natural imo) nut this creates that cool 'big bang' effect
     )
         .expect("Failed to create simulation");
 
@@ -56,12 +56,8 @@ pub fn update_simulation(
             let y = sim_res.0.positions_y[particle_id.0];
             transform.translation = Vec3::new(x as f32, y as f32, -2.0);
         });
-
 }
 
-/// this is currently not used but can be used to update the forces of the particles
-/// it is more computationally expensive than the current implementation so
-/// if we wanted to use it then we would probably want to reduce the number of particles
 pub fn update_forces(
     mut sim_res: ResMut<PhysicsSim>,
 ) {
@@ -82,7 +78,7 @@ pub fn update_forces(
     let tree = build_tree(&particles, bounding_quad);
 
     // Barnes–Hut parameters
-    let theta = 0.5; // controls approximation accuracy
+    let theta = 1.0; // controls approximation accuracy
     let g = 0.314;
 
     let mutex_sim_res = Mutex::new(sim_res.deref_mut());
@@ -125,6 +121,7 @@ pub fn update_forces(
             sim_res.0.positions_x[i] += new_vx * sim_res.0.dt;
             sim_res.0.positions_y[i] += new_vy * sim_res.0.dt;
         });
+
 }
 
 pub fn spawn_particles(
