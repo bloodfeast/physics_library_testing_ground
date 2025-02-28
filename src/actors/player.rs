@@ -11,7 +11,7 @@ use crate::state::MainGameState;
 pub(crate) const GROUND_LEVEL: f64 = -300.0;
 
 const PHYSICS_CONSTANTS: PhysicsConstants = PhysicsConstants {
-    gravity: -DEFAULT_PHYSICS_CONSTANTS.gravity,
+    gravity: -DEFAULT_PHYSICS_CONSTANTS.gravity / 2.0,
     ground_level: GROUND_LEVEL + 30.0,
     ..DEFAULT_PHYSICS_CONSTANTS
 };

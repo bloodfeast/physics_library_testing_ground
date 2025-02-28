@@ -51,7 +51,7 @@ pub fn update_simulation(
     sim_res.0.step().expect("Simulation step failed");
 
     // Update each entity’s transform using the simulation’s positions.
-    query.iter_mut()
+    query.par_iter_mut()
         .for_each(|(mut transform, particle_id)| {
             let x = sim_res.0.positions_x[particle_id.0];
             let y = sim_res.0.positions_y[particle_id.0];
@@ -65,6 +65,7 @@ pub fn update_forces(
     // 1. Convert simulation arrays into a Vec<ParticleData>
     let particle_count = sim_res.0.positions_x.len();
     let particles: Vec<ParticleData> = (0..particle_count)
+        .into_par_iter()
         .map(|i| ParticleData {
             x: sim_res.0.positions_x[i],
             y: sim_res.0.positions_y[i],

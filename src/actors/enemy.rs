@@ -47,7 +47,7 @@ pub fn spawn_enemy(
     let player_transform = query.iter()
         .next()
         .expect("There should only be one player entity");
-    let spawn_x_position = rand::random_range(player_transform.translation.x - 400.0..=player_transform.translation.x + 400.0);
+    let spawn_x_position = rand::random_range((player_transform.translation.x - 800.0).max(-800.0)..=(player_transform.translation.x + 800.0).min(1200.0));
     let spawn_y_position = rand::random_range(player_transform.translation.y + 600.0..=player_transform.translation.y + 800.0);
     let initial_velocity = rand::random_range(200.0..=400.0);
     // Enemy
