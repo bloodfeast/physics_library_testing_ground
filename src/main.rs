@@ -7,8 +7,9 @@ use bevy::prelude::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_systems(Startup, (actors::player::setup_player, actors::particles::setup, state::setup_game_state))
-        .add_systems(PostStartup, (actors::particles::spawn_particles, hud::setup_hud))
+        .add_systems(PreStartup, (hud::setup_hud, state::setup_game_state, actors::particles::setup))
+        .add_systems(Startup, actors::player::setup_player)
+        .add_systems(PostStartup, actors::particles::spawn_particles)
         .add_systems(FixedUpdate, (
             actors::enemy::spawn_enemy,
             actors::particles::update_forces,

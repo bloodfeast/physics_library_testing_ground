@@ -22,18 +22,35 @@ pub fn setup(
     };
 
     let mut sim = Simulation::new(
-        42_000,               // number of particles
+        64_000,               // number of particles
         (0.0, 0.0),         // initial position
         200.0 / std::f64::consts::PI,               // initial speed
         (0.0, 0.25),         // initial direction
         0.15,                // mass
         constants,
-        0.0016,              // time step (0.0016 is essentially slowing down the simulation, ~0.16 looks more natural imo) nut this creates that cool 'big bang' effect
+        0.00016,              // time step (0.0016 is essentially slowing down the simulation, ~0.16 looks more natural imo) but this creates that cool 'big bang' effect
     )
         .expect("Failed to create simulation");
 
-    sim.directions_x.par_iter_mut().for_each(|y| *y = std::f64::consts::PI * rand::random_range(-0.25..0.25));
-    sim.directions_y.par_iter_mut().for_each(|y| *y = std::f64::consts::PI * rand::random_range(-0.25..0.25));
+    sim.positions_x.par_iter_mut()
+        .enumerate()
+        .for_each(|(i, x)|
+            *x = 1.0 / i as f64 / (rand::random_range(-10.0..10.0) * (1./std::f64::consts::PI))
+        );
+    sim.positions_y.par_iter_mut()
+        .enumerate()
+        .for_each(|(i, y)|
+            *y = 1.0 / i as f64 / (rand::random_range(-10.0..10.0) * (1./std::f64::consts::PI))
+        );
+
+    sim.directions_x.par_iter_mut()
+        .for_each(|y|
+            *y = std::f64::consts::PI * rand::random_range(-0.25..0.25)
+        );
+    sim.directions_y.par_iter_mut()
+        .for_each(|y|
+            *y = std::f64::consts::PI * rand::random_range(-0.25..0.25)
+        );
 
     let physics_sim = PhysicsSim(sim);
     commands.insert_resource(physics_sim);
@@ -75,7 +92,7 @@ pub fn update_forces(
         .collect();
 
     // 2. Define a quad that bounds the simulation (adjust as needed)
-    let bounding_quad = Quad { cx: 0.0, cy: 0.0, half_size: 1.0 / std::f64::consts::PI };
+    let bounding_quad = Quad { cx: 0.0, cy: 0.0, half_size: 0.5 / std::f64::consts::PI };
 
     // 3. Build the Barnes–Hut tree
     let tree = build_tree(&particles, bounding_quad);
@@ -133,11 +150,9 @@ pub fn spawn_particles(
 ) {
     let particle_count = sim_res.0.positions_x.len();
     for i in 0..particle_count {
-        let color = Color::hsl(360. * i as f32 / particle_count as f32, rand::random_range(0.45..1.0), rand::random_range(0.5..0.95));
-        let (x, y) = (
-            1.0 / i as f32 * 0.314 / rand::random_range(-100.0..100.0) * std::f32::consts::PI,
-            1.0 / i as f32 * 0.314 / rand::random_range(-100.0..100.0) * std::f32::consts::PI
-        );
+        let color = Color::hsl(360. * i as f32 / particle_count as f32, rand::random_range(0.45..=1.0), rand::random_range(0.5..=1.0));
+        let x = sim_res.0.positions_x[i] as f32;
+        let y = sim_res.0.positions_y[i] as f32;
         commands.spawn((
             Sprite {
                 color,
