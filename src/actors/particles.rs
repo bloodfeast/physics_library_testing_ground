@@ -1,4 +1,5 @@
 use std::ops::DerefMut;
+use std::sync::atomic::AtomicPtr;
 use std::sync::Mutex;
 use bevy::asset::AssetContainer;
 use bevy::prelude::*;
@@ -21,7 +22,7 @@ pub fn setup(
     };
 
     let mut sim = Simulation::new(
-        14_000,               // number of particles
+        42_000,               // number of particles
         (0.0, 0.0),         // initial position
         200.0 / std::f64::consts::PI,               // initial speed
         (0.0, 0.25),         // initial direction
@@ -83,13 +84,13 @@ pub fn update_forces(
     let theta = std::f64::consts::FRAC_2_SQRT_PI; // controls approximation accuracy
     let g = 0.314;
 
-    let mutex_sim_res = Mutex::new(sim_res.deref_mut());
+    let mut mutex_sim_res = AtomicPtr::new(sim_res.deref_mut());
 
     // 4. For each particle, compute net force and update velocity/position.
     (0..particle_count)
         .into_par_iter()
         .for_each(|i| {
-            let mut sim_res = mutex_sim_res.lock().unwrap();
+            let sim_res = unsafe { &mut *mutex_sim_res.load(std::sync::atomic::Ordering::Relaxed) };
             let p = ParticleData {
                 x: sim_res.0.positions_x[i],
                 y: sim_res.0.positions_y[i],
