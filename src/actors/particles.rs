@@ -15,12 +15,13 @@ pub fn setup(
 ) {
     // Initialize physics constants and simulation parameters
     let constants = PhysicsConstants {
-        gravity: -DEFAULT_PHYSICS_CONSTANTS.gravity,
+        gravity: 0.0,
+        air_density: 0.0,
         ..DEFAULT_PHYSICS_CONSTANTS
     };
 
     let mut sim = Simulation::new(
-        15_000,               // number of particles
+        14_000,               // number of particles
         (0.0, 0.0),         // initial position
         200.0 / std::f64::consts::PI,               // initial speed
         (0.0, 0.25),         // initial direction
@@ -78,7 +79,7 @@ pub fn update_forces(
     let tree = build_tree(&particles, bounding_quad);
 
     // Barnes–Hut parameters
-    let theta = 1.0; // controls approximation accuracy
+    let theta = std::f64::consts::FRAC_2_SQRT_PI; // controls approximation accuracy
     let g = 0.314;
 
     let mutex_sim_res = Mutex::new(sim_res.deref_mut());
@@ -110,7 +111,7 @@ pub fn update_forces(
             let new_vy = vy + ay * sim_res.0.dt;
 
             // Recompute speed and normalize direction.
-            let new_speed = (new_vx * new_vx + new_vy * new_vy).sqrt();
+            let new_speed = (new_vx * new_vx + new_vy * new_vy).sqrt().log(g);
             sim_res.0.speeds[i] = new_speed;
             if new_speed != 0.0 {
                 sim_res.0.directions_x[i] = new_vx / new_speed;
@@ -130,7 +131,7 @@ pub fn spawn_particles(
 ) {
     let particle_count = sim_res.0.positions_x.len();
     for i in 0..particle_count {
-        let color = Color::hsl(360. * i as f32 / particle_count as f32, rand::random_range(0.65..1.0), rand::random_range(0.5..0.9));
+        let color = Color::hsl(360. * i as f32 / particle_count as f32, rand::random_range(0.45..1.0), rand::random_range(0.5..0.95));
         let (x, y) = (
             1.0 / i as f32 * 0.314 / rand::random_range(-100.0..100.0) * std::f32::consts::PI,
             1.0 / i as f32 * 0.314 / rand::random_range(-100.0..100.0) * std::f32::consts::PI

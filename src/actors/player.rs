@@ -8,7 +8,7 @@ use rs_physics::utils::{DEFAULT_PHYSICS_CONSTANTS, PhysicsConstants};
 use crate::hud::{EnergyBar, HpBar, ShieldBar};
 use crate::state::MainGameState;
 
-const GROUND_LEVEL: f64 = -300.0;
+pub(crate) const GROUND_LEVEL: f64 = -300.0;
 
 const PHYSICS_CONSTANTS: PhysicsConstants = PhysicsConstants {
     gravity: -DEFAULT_PHYSICS_CONSTANTS.gravity,
@@ -151,7 +151,7 @@ pub fn player_movement_physics (
         .expect("There should only be one player entity");
     if let Ok(mut physics_system) =
         player_query.get_single_mut() {
-        physics_system.0.update( 0.64);
+        physics_system.0.update( 0.62);
 
         let ground_level = calculate_ground_level(player_transform.translation.x as f64);
         physics_system.0.update_ground_level(ground_level);
@@ -245,7 +245,7 @@ pub fn player_input(
             // Subtract offset from π/2 so that if x > 0, jump tilts right (angle becomes < π/2)
             // and if x < 0, jump tilts left (angle becomes > π/2).
             let thrust_angle = std::f64::consts::FRAC_PI_2 - angle_offset;
-            let base_magnitude = 6900.0;
+            let base_magnitude = 9800.0;
             // the only issue with this is that it takes away from the vertical thrust.
             // this can be fixed by increasing the magnitude of the thrust.
             // which is why the magnitude is doubled when x != 0.
@@ -260,7 +260,7 @@ pub fn player_input(
                 magnitude,
                 angle: thrust_angle,
             });
-            game_state.player_energy -= 25.0;
+            game_state.player_energy = (game_state.player_energy - 25.0).max(0.0);
         }
     }
     if keyboard_input.pressed(KeyCode::KeyA) {
@@ -268,6 +268,7 @@ pub fn player_input(
         if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 2.5 {
             return;
         }
+        // todo: something is wrong with the tangent calculation or the angle but i honestly don't know what it is.
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
         // For leftward movement, reverse the tangent.
         let left_tangent = (-tangent.0, -tangent.1);
@@ -276,7 +277,7 @@ pub fn player_input(
         let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
             200.0
         } else {
-            280.0
+            380.0
         };
         // Apply thrust along this angle.
         player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
@@ -293,7 +294,7 @@ pub fn player_input(
         let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
             200.0
         } else {
-            280.0
+            380.0
         };
         player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
 

@@ -20,7 +20,7 @@ pub fn setup_hud(
     commands.spawn((
         ShieldBar,
         Sprite {
-            color: Color::rgb(0.0, 0.0, 1.0).into(),
+            color: Color::rgb(0.25, 0.65, 1.0).into(),
             custom_size: Some(Vec2::new(300.0, 10.0)),
             anchor: Anchor::CenterLeft,
             ..Default::default()
