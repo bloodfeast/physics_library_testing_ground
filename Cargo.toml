@@ -8,3 +8,4 @@ bevy = "0.15"
 rs_physics = { git = "https://github.com/bloodfeast/rs_physics", features = ["all"] }
 rand = "0.9.0"
 rayon = "1.10.0"
+bumpalo = "3.17.0"

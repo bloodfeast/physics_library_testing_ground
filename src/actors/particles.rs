@@ -1,4 +1,5 @@
 use std::ops::DerefMut;
+use std::sync::atomic::AtomicPtr;
 use std::sync::Mutex;
 use bevy::asset::AssetContainer;
 use bevy::prelude::*;
@@ -15,23 +16,41 @@ pub fn setup(
 ) {
     // Initialize physics constants and simulation parameters
     let constants = PhysicsConstants {
-        gravity: -DEFAULT_PHYSICS_CONSTANTS.gravity,
+        gravity: 0.0,
+        air_density: 0.0,
         ..DEFAULT_PHYSICS_CONSTANTS
     };
 
     let mut sim = Simulation::new(
-        14_000,               // number of particles
+        64_000,               // number of particles
         (0.0, 0.0),         // initial position
         200.0 / std::f64::consts::PI,               // initial speed
         (0.0, 0.25),         // initial direction
         0.15,                // mass
         constants,
-        0.0016,              // time step (0.016 is essentially slowing down the simulation, ~0.16 looks more natural imo)
+        0.00016,              // time step (0.0016 is essentially slowing down the simulation, ~0.16 looks more natural imo) but this creates that cool 'big bang' effect
     )
         .expect("Failed to create simulation");
 
-    sim.directions_x.par_iter_mut().for_each(|y| *y = std::f64::consts::PI * rand::random_range(-0.25..0.25));
-    sim.directions_y.par_iter_mut().for_each(|y| *y = std::f64::consts::PI * rand::random_range(-0.25..0.25));
+    sim.positions_x.par_iter_mut()
+        .enumerate()
+        .for_each(|(i, x)|
+            *x = 1.0 / i as f64 / (rand::random_range(-10.0..10.0) * (1./std::f64::consts::PI))
+        );
+    sim.positions_y.par_iter_mut()
+        .enumerate()
+        .for_each(|(i, y)|
+            *y = 1.0 / i as f64 / (rand::random_range(-10.0..10.0) * (1./std::f64::consts::PI))
+        );
+
+    sim.directions_x.par_iter_mut()
+        .for_each(|y|
+            *y = std::f64::consts::PI * rand::random_range(-0.25..0.25)
+        );
+    sim.directions_y.par_iter_mut()
+        .for_each(|y|
+            *y = std::f64::consts::PI * rand::random_range(-0.25..0.25)
+        );
 
     let physics_sim = PhysicsSim(sim);
     commands.insert_resource(physics_sim);
@@ -50,24 +69,21 @@ pub fn update_simulation(
     sim_res.0.step().expect("Simulation step failed");
 
     // Update each entity’s transform using the simulation’s positions.
-    query.iter_mut()
+    query.par_iter_mut()
         .for_each(|(mut transform, particle_id)| {
             let x = sim_res.0.positions_x[particle_id.0];
             let y = sim_res.0.positions_y[particle_id.0];
             transform.translation = Vec3::new(x as f32, y as f32, -2.0);
         });
-
 }
 
-/// this is currently not used but can be used to update the forces of the particles
-/// it is more computationally expensive than the current implementation so
-/// if we wanted to use it then we would probably want to reduce the number of particles
 pub fn update_forces(
     mut sim_res: ResMut<PhysicsSim>,
 ) {
     // 1. Convert simulation arrays into a Vec<ParticleData>
     let particle_count = sim_res.0.positions_x.len();
     let particles: Vec<ParticleData> = (0..particle_count)
+        .into_par_iter()
         .map(|i| ParticleData {
             x: sim_res.0.positions_x[i],
             y: sim_res.0.positions_y[i],
@@ -76,22 +92,22 @@ pub fn update_forces(
         .collect();
 
     // 2. Define a quad that bounds the simulation (adjust as needed)
-    let bounding_quad = Quad { cx: 0.0, cy: 0.0, half_size: 1.0 / std::f64::consts::PI };
+    let bounding_quad = Quad { cx: 0.0, cy: 0.0, half_size: 0.5 / std::f64::consts::PI };
 
     // 3. Build the Barnes–Hut tree
     let tree = build_tree(&particles, bounding_quad);
 
     // Barnes–Hut parameters
-    let theta = 0.5; // controls approximation accuracy
+    let theta = std::f64::consts::FRAC_2_SQRT_PI; // controls approximation accuracy
     let g = 0.314;
 
-    let mutex_sim_res = Mutex::new(sim_res.deref_mut());
+    let mut mutex_sim_res = AtomicPtr::new(sim_res.deref_mut());
 
     // 4. For each particle, compute net force and update velocity/position.
     (0..particle_count)
         .into_par_iter()
         .for_each(|i| {
-            let mut sim_res = mutex_sim_res.lock().unwrap();
+            let sim_res = unsafe { &mut *mutex_sim_res.load(std::sync::atomic::Ordering::Relaxed) };
             let p = ParticleData {
                 x: sim_res.0.positions_x[i],
                 y: sim_res.0.positions_y[i],
@@ -114,7 +130,7 @@ pub fn update_forces(
             let new_vy = vy + ay * sim_res.0.dt;
 
             // Recompute speed and normalize direction.
-            let new_speed = (new_vx * new_vx + new_vy * new_vy).sqrt();
+            let new_speed = (new_vx * new_vx + new_vy * new_vy).sqrt().log(g);
             sim_res.0.speeds[i] = new_speed;
             if new_speed != 0.0 {
                 sim_res.0.directions_x[i] = new_vx / new_speed;
@@ -125,6 +141,7 @@ pub fn update_forces(
             sim_res.0.positions_x[i] += new_vx * sim_res.0.dt;
             sim_res.0.positions_y[i] += new_vy * sim_res.0.dt;
         });
+
 }
 
 pub fn spawn_particles(
@@ -133,11 +150,9 @@ pub fn spawn_particles(
 ) {
     let particle_count = sim_res.0.positions_x.len();
     for i in 0..particle_count {
-        let color = Color::hsl(360. * i as f32 / particle_count as f32, rand::random_range(0.65..1.0), rand::random_range(0.5..0.9));
-        let (x, y) = (
-            1.0 / i as f32 * 0.314 / rand::random_range(-100.0..100.0) * std::f32::consts::PI,
-            1.0 / i as f32 * 0.314 / rand::random_range(-100.0..100.0) * std::f32::consts::PI
-        );
+        let color = Color::hsl(360. * i as f32 / particle_count as f32, rand::random_range(0.45..=1.0), rand::random_range(0.5..=1.0));
+        let x = sim_res.0.positions_x[i] as f32;
+        let y = sim_res.0.positions_y[i] as f32;
         commands.spawn((
             Sprite {
                 color,
