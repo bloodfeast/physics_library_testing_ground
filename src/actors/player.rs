@@ -1,6 +1,8 @@
 use bevy::log::tracing_subscriber::fmt::time;
+use bevy::math::VectorSpace;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
+use bevy::tasks::futures_lite::StreamExt;
 use rs_physics::forces::Force;
 use rs_physics::interactions::elastic_collision_2d;
 use rs_physics::models::ObjectIn2D;
@@ -12,7 +14,7 @@ pub(crate) const GROUND_LEVEL: f64 = -300.0;
 
 const PHYSICS_CONSTANTS: PhysicsConstants = PhysicsConstants {
     gravity: -DEFAULT_PHYSICS_CONSTANTS.gravity / 2.0,
-    ground_level: GROUND_LEVEL + 30.0,
+    ground_level: GROUND_LEVEL,
     ..DEFAULT_PHYSICS_CONSTANTS
 };
 
@@ -89,7 +91,7 @@ pub fn setup_player(
 
 fn calculate_ground_level(x_pos: f64) -> f64 {
     let join_x = 396.54;
-    let base = GROUND_LEVEL + 33.82;
+    let base = GROUND_LEVEL + 30.0;
     if x_pos > join_x {
         let offset = x_pos - join_x;
         let slope = std::f32::consts::FRAC_PI_8.tan() as f64; // ≈0.4142
@@ -149,48 +151,47 @@ pub fn player_movement_physics (
 
     let mut player_transform = player_transform_query.get_single_mut()
         .expect("There should only be one player entity");
-    if let Ok(mut physics_system) =
-        player_query.get_single_mut() {
-        physics_system.0.update( 0.62);
+    player_query
+        .par_iter_mut()
+        .for_each(|mut physics_system| {
+            physics_system.0.update( 0.62);
 
-        let ground_level = calculate_ground_level(player_transform.translation.x as f64);
-        physics_system.0.update_ground_level(ground_level);
+            let ground_level = calculate_ground_level(player_transform.translation.x as f64);
+            physics_system.0.update_ground_level(ground_level);
 
-        let player_obj = physics_system.0.get_object_mut(0).unwrap();
+            let player_obj = physics_system.0.get_object_mut(0).unwrap();
 
-        player_obj.velocity = player_obj.velocity * 0.98;
-        if player_obj.velocity.abs() < 1.0 {
-            player_obj.velocity = 0.0;
-            player_obj.direction.x = 0.0;
-        }
+            player_obj.velocity = player_obj.velocity * 0.98;
+            if player_obj.velocity.abs() < 1.0 {
+                player_obj.velocity = 0.0;
+                player_obj.direction.x = 0.0;
+            }
 
-        if player_obj.position.x >= 1100.0 || player_obj.position.x <= -400.0 {
-            player_obj.position.x = player_obj.position.x.clamp(-400.0, 1100.0);
-            player_obj.direction.x = 0.0;
-        }
+            if player_obj.position.x >= 1100.0 || player_obj.position.x <= -400.0 {
+                player_obj.position.x = player_obj.position.x.clamp(-400.0, 1100.0);
+                player_obj.direction.x = 0.0;
+            }
 
-        if player_obj.position.y <= ground_level + 10.0 && player_obj.direction.y < 0.0 {
-            let mut ground_object = ObjectIn2D::new(1e11, 0.0, (0.0, 0.0), (player_obj.position.x, ground_level));
-            // Now simulate an elastic collision between the player and the ground.
-            // The ground object is an immovable object with very high mass.
-            let collision_angle = if player_transform.translation.x > 396.54 {
-                std::f64::consts::FRAC_PI_2 + std::f64::consts::FRAC_PI_8
-            } else {
-                std::f64::consts::FRAC_PI_2
-            };
-            elastic_collision_2d(
-                &PHYSICS_CONSTANTS,
-                player_obj,
-                &mut ground_object,
-                collision_angle,
-                time.delta_secs_f64(),
-                0.45,
-                0.25
-            ).expect("Elastic collision failed");
-        }
-
-
-    }
+            if player_obj.position.y <= ground_level + 10.0 && player_obj.direction.y < 0.0 {
+                let mut ground_object = ObjectIn2D::new(1e11, 0.0, (0.0, 0.0), (player_obj.position.x, ground_level));
+                // Now simulate an elastic collision between the player and the ground.
+                // The ground object is an immovable object with very high mass.
+                let collision_angle = if player_transform.translation.x > 396.54 {
+                    std::f64::consts::FRAC_PI_2 + std::f64::consts::FRAC_PI_8
+                } else {
+                    std::f64::consts::FRAC_PI_2
+                };
+                elastic_collision_2d(
+                    &PHYSICS_CONSTANTS,
+                    player_obj,
+                    &mut ground_object,
+                    collision_angle,
+                    time.delta_secs_f64(),
+                    0.45,
+                    0.15
+                ).expect("Elastic collision failed");
+            }
+        });
 }
 
 pub fn update_player_movement(
@@ -226,6 +227,7 @@ pub fn player_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut player_query: Query<&mut PhysicsSystem2D, With<Player>>,
     mut game_state: ResMut<MainGameState>,
+    time: Res<Time>,
 ) {
 
     let mut physics_system = player_query.iter_mut()
@@ -265,19 +267,18 @@ pub fn player_input(
     }
     if keyboard_input.pressed(KeyCode::KeyA) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
-        if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 2.5 {
+        if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 5.0 {
             return;
         }
         // todo: something is wrong with the tangent calculation or the angle but i honestly don't know what it is.
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
         // For leftward movement, reverse the tangent.
-        let left_tangent = (-tangent.0, -tangent.1);
         // Compute the angle from the left tangent vector.
-        let angle = left_tangent.1.atan2(left_tangent.0);
+        let angle = VectorSpace::lerp(tangent.1, tangent.0, time.delta_secs()).to_radians();
         let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            200.0
+            -200.0
         } else {
-            380.0
+            -380.0
         };
         // Apply thrust along this angle.
         player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
@@ -285,12 +286,13 @@ pub fn player_input(
 
     if keyboard_input.pressed(KeyCode::KeyD) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
-        if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 2.5 {
+        if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 5.0 {
             return;
         }
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
         // Compute the angle from the tangent vector.
-        let angle = tangent.1.atan2(tangent.0);
+
+        let angle = VectorSpace::lerp(tangent.1, tangent.0, time.delta_secs()).to_radians();
         let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
             200.0
         } else {
