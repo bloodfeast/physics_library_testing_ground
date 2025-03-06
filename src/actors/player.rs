@@ -1,11 +1,13 @@
 use bevy::log::tracing_subscriber::fmt::time;
 use bevy::math::VectorSpace;
 use bevy::prelude::*;
+use bevy::render::view::prepare_windows;
 use bevy::sprite::Anchor;
 use bevy::tasks::futures_lite::StreamExt;
+use bevy::window::WindowRef;
 use rs_physics::forces::Force;
 use rs_physics::interactions::elastic_collision_2d;
-use rs_physics::models::ObjectIn2D;
+use rs_physics::models::{ObjectIn2D, Velocity2D};
 use rs_physics::utils::{DEFAULT_PHYSICS_CONSTANTS, PhysicsConstants};
 use crate::hud::{EnergyBar, HpBar, ShieldBar};
 use crate::state::MainGameState;
@@ -13,7 +15,7 @@ use crate::state::MainGameState;
 pub(crate) const GROUND_LEVEL: f64 = -300.0;
 
 const PHYSICS_CONSTANTS: PhysicsConstants = PhysicsConstants {
-    gravity: -DEFAULT_PHYSICS_CONSTANTS.gravity / 2.0,
+    gravity: DEFAULT_PHYSICS_CONSTANTS.gravity / 2.0,
     ground_level: GROUND_LEVEL,
     ..DEFAULT_PHYSICS_CONSTANTS
 };
@@ -29,27 +31,28 @@ impl PhysicsSystem2D {
         physics_system.apply_drag(0.47, 0.5);
         Self (physics_system)
     }
-
 }
 
 #[derive(Component)]
 pub struct Player;
 
-
-
-pub fn setup_player(
+pub fn setup_camera(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     commands.spawn(
         Camera2d {
             ..default()
         }
     );
+}
 
-    // Player
-    let player_object = ObjectIn2D::new(65.0, 0.0, (0.0, 0.0), (-200.0, GROUND_LEVEL + 100.0));
+pub fn setup_player(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    // Player - updated to use the new ObjectIn2D::new with velocity components
+    let player_object = ObjectIn2D::new(65.0, 0.0, 0.0, (-200.0, GROUND_LEVEL + 100.0));
     let player_color = Color::srgb(0.5, 1.0, 0.5);
 
     commands
@@ -139,48 +142,54 @@ pub fn camera_movement(
 
     energy_bar_transform.translation.x = camera_transform.translation.x - 400.0;
     energy_bar_transform.translation.y = camera_transform.translation.y + 280.0;
-
 }
-
 
 pub fn player_movement_physics (
     mut player_transform_query: Query<&mut Transform, With<Player>>,
     mut player_query: Query<&mut PhysicsSystem2D>,
     time: Res<Time<Fixed>>,
 ) {
-
     let mut player_transform = player_transform_query.get_single_mut()
         .expect("There should only be one player entity");
     player_query
         .par_iter_mut()
         .for_each(|mut physics_system| {
-            physics_system.0.update( 0.62);
+            physics_system.0.update(0.62);
 
             let ground_level = calculate_ground_level(player_transform.translation.x as f64);
             physics_system.0.update_ground_level(ground_level);
 
             let player_obj = physics_system.0.get_object_mut(0).unwrap();
 
-            player_obj.velocity = player_obj.velocity * 0.98;
-            if player_obj.velocity.abs() < 1.0 {
-                player_obj.velocity = 0.0;
-                player_obj.direction.x = 0.0;
+            // Apply velocity damping - updated to work with velocity components
+            player_obj.velocity.x *= 0.98;
+            player_obj.velocity.y *= 0.98;
+
+            // Check if velocity is very small and zero it out if so
+            if player_obj.speed() < 1.0 {
+                player_obj.velocity.x = 0.0;
+                player_obj.velocity.y = 0.0;
             }
 
+            // Enforce position bounds
             if player_obj.position.x >= 1100.0 || player_obj.position.x <= -400.0 {
                 player_obj.position.x = player_obj.position.x.clamp(-400.0, 1100.0);
-                player_obj.direction.x = 0.0;
+                player_obj.velocity.x = 0.0;
             }
 
-            if player_obj.position.y <= ground_level + 10.0 && player_obj.direction.y < 0.0 {
-                let mut ground_object = ObjectIn2D::new(1e11, 0.0, (0.0, 0.0), (player_obj.position.x, ground_level));
-                // Now simulate an elastic collision between the player and the ground.
-                // The ground object is an immovable object with very high mass.
+            // Ground collision detection
+            if player_obj.position.y <= ground_level + 10.0 && player_obj.velocity.y < 0.0 {
+                // Create a ground object with very high mass (effectively immovable)
+                let mut ground_object = ObjectIn2D::new(1e11, 0.0, 0.0, (player_obj.position.x, ground_level));
+
+                // Determine collision angle based on terrain
                 let collision_angle = if player_transform.translation.x > 396.54 {
                     std::f64::consts::FRAC_PI_2 + std::f64::consts::FRAC_PI_8
                 } else {
                     std::f64::consts::FRAC_PI_2
                 };
+
+                // Simulate elastic collision with the ground
                 elastic_collision_2d(
                     &PHYSICS_CONSTANTS,
                     player_obj,
@@ -198,12 +207,9 @@ pub fn update_player_movement(
     mut player_transform_query: Query<&mut Transform, With<Player>>,
     mut player_query: Query<&mut PhysicsSystem2D>,
 ) {
-
     let mut player_transform = player_transform_query.get_single_mut()
         .expect("There should only be one player entity");
-    if let Ok(mut physics_system) =
-        player_query.get_single_mut() {
-
+    if let Ok(mut physics_system) = player_query.get_single_mut() {
         let player_obj = physics_system.0.get_object_mut(0).unwrap();
 
         player_transform.translation.x = player_obj.position.x as f32;
@@ -223,37 +229,38 @@ fn ground_tangent(x_pos: f32) -> (f32, f32) {
         (1.0, 0.0)
     }
 }
+
 pub fn player_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut player_query: Query<&mut PhysicsSystem2D, With<Player>>,
     mut game_state: ResMut<MainGameState>,
     time: Res<Time>,
 ) {
-
     let mut physics_system = player_query.iter_mut()
-            .next()
-            .expect("There should only be one player entity");
+        .next()
+        .expect("There should only be one player entity");
 
     if keyboard_input.just_pressed(KeyCode::Space) {
         if game_state.player_energy <= 0.0 {
             return;
         }
+
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
         if player_phys_obj.position.y <= calculate_ground_level(player_phys_obj.position.x) + 10.0 {
+            // Get the direction of movement from velocity components
+            let direction = player_phys_obj.direction();
 
             let max_offset = std::f64::consts::FRAC_PI_6; // ~30 degrees
-            // Offset angle based on x direction (between -1.0 and 1.0 inclusive)
-            let angle_offset = player_phys_obj.direction.x * max_offset;
+            // Offset angle based on x direction
+            let angle_offset = direction.x * max_offset;
             // Subtract offset from π/2 so that if x > 0, jump tilts right (angle becomes < π/2)
             // and if x < 0, jump tilts left (angle becomes > π/2).
             let thrust_angle = std::f64::consts::FRAC_PI_2 - angle_offset;
             let base_magnitude = 9800.0;
-            // the only issue with this is that it takes away from the vertical thrust.
-            // this can be fixed by increasing the magnitude of the thrust.
-            // which is why the magnitude is doubled when x != 0.
-            // (this is less realistic, but it makes the movement feel better)
-            let magnitude = if player_phys_obj.direction.x.abs() != 0.0 {
-                base_magnitude * 2.0
+
+            // Adjust magnitude based on horizontal movement
+            let magnitude = if direction.x.abs() != 0.0 {
+                base_magnitude * 0.75
             } else {
                 base_magnitude
             };
@@ -265,22 +272,26 @@ pub fn player_input(
             game_state.player_energy = (game_state.player_energy - 25.0).max(0.0);
         }
     }
+
     if keyboard_input.pressed(KeyCode::KeyA) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
         if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 5.0 {
             return;
         }
-        // todo: something is wrong with the tangent calculation or the angle but i honestly don't know what it is.
+
+        // Calculate ground tangent for appropriate movement angle
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
-        // For leftward movement, reverse the tangent.
-        // Compute the angle from the left tangent vector.
+        // Compute the angle from the left tangent vector
         let angle = VectorSpace::lerp(tangent.1, tangent.0, time.delta_secs()).to_radians();
+
+        // Adjust force magnitude based on position
         let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            -200.0
+            -100.0
         } else {
-            -380.0
+            -280.0
         };
-        // Apply thrust along this angle.
+
+        // Apply thrust along this angle
         player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
     }
 
@@ -289,16 +300,17 @@ pub fn player_input(
         if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 5.0 {
             return;
         }
+
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
-        // Compute the angle from the tangent vector.
-
+        // Compute the angle from the tangent vector
         let angle = VectorSpace::lerp(tangent.1, tangent.0, time.delta_secs()).to_radians();
-        let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            200.0
-        } else {
-            380.0
-        };
-        player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
 
+        let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
+            100.0
+        } else {
+            280.0
+        };
+
+        player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
     }
 }

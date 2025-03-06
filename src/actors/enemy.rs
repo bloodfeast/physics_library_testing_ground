@@ -50,8 +50,10 @@ pub fn spawn_enemy(
     let spawn_x_position = rand::random_range((player_transform.translation.x - 800.0).max(-800.0)..=(player_transform.translation.x + 800.0).min(1200.0));
     let spawn_y_position = rand::random_range(player_transform.translation.y + 600.0..=player_transform.translation.y + 800.0);
     let initial_velocity = rand::random_range(200.0..=400.0);
-    // Enemy
-    let mut enemy_object = ObjectIn2D::new(1.0, initial_velocity, (0.0, -1.0), (spawn_x_position as f64, spawn_y_position as f64));
+
+    // Enemy - Updated to use the new directional velocities API
+    // Since the enemy moves straight down, we set vx=0 and vy=-initial_velocity
+    let enemy_object = ObjectIn2D::new(1.0, 0.0, -initial_velocity, (spawn_x_position as f64, spawn_y_position as f64));
     let enemy_color = Color::srgb(1.0, 0.25, 0.25);
 
     let enemy_mesh = Circle::new(3.14);
