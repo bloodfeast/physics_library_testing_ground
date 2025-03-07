@@ -246,7 +246,7 @@ pub fn player_input(
         }
 
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
-        if player_phys_obj.position.y <= calculate_ground_level(player_phys_obj.position.x) + 10.0 {
+        if player_phys_obj.position.y <= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
             // Get the direction of movement from velocity components
             let direction = player_phys_obj.direction();
 
@@ -275,9 +275,6 @@ pub fn player_input(
 
     if keyboard_input.pressed(KeyCode::KeyA) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
-        if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            return;
-        }
 
         // Calculate ground tangent for appropriate movement angle
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
@@ -297,9 +294,6 @@ pub fn player_input(
 
     if keyboard_input.pressed(KeyCode::KeyD) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
-        if player_phys_obj.position.y > calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            return;
-        }
 
         let tangent = ground_tangent(player_phys_obj.position.x as f32);
         // Compute the angle from the tangent vector

@@ -15,8 +15,8 @@ fn main() {
         .add_systems(Startup, (
             actors::player::setup_camera,
             actors::player::setup_player,
+            actors::particles::spawn_particles,
         ))
-        .add_systems(PostStartup, actors::particles::spawn_particles)
         .add_systems(FixedUpdate, (
             actors::enemy::spawn_enemy,
             state::refresh_player_energy,
@@ -26,8 +26,8 @@ fn main() {
         .add_systems(Update,(
             actors::enemy::update_enemy,
             actors::player::player_input,
-            actors::particles::update_simulation,
             actors::player::camera_movement,
+            actors::particles::update_simulation,
         ))
         .add_systems(PostUpdate, (actors::player::update_player_movement, hud::update_energy, hud::update_hp, hud::update_shield))
         .run();
