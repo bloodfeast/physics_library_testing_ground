@@ -13,6 +13,7 @@ pub struct PhysicsSim(Simulation);
 
 pub fn setup(
     mut commands: Commands,
+    time: Res<Time<Fixed>>,
 ) {
     // Initialize physics constants and simulation parameters
     let constants = PhysicsConstants {
@@ -22,34 +23,33 @@ pub fn setup(
     };
 
     let mut sim = Simulation::new(
-        64_000,               // number of particles
+        128_000,               // number of particles
         (0.0, 0.0),         // initial position
-        200.0 / std::f64::consts::PI,               // initial speed
+        -486.,               // initial speed
         (0.0, 0.25),         // initial direction
-        0.15,                // mass
+        std::f64::consts::PI * rand::random_range(10.0..=60.0),                // mass
         constants,
-        0.00016,              // time step (0.0016 is essentially slowing down the simulation, ~0.16 looks more natural imo) but this creates that cool 'big bang' effect
+        time.timestep().as_secs_f64(),              // time step (0.0016 is essentially slowing down the simulation, ~0.16 looks more natural imo) but this creates that cool 'big bang' effect
     )
         .expect("Failed to create simulation");
 
-    sim.positions_x.par_iter_mut()
+
+    sim.masses.par_iter_mut()
         .enumerate()
-        .for_each(|(i, x)|
-            *x = 1.0 / i as f64 / (rand::random_range(-10.0..10.0) * (1./std::f64::consts::PI))
-        );
-    sim.positions_y.par_iter_mut()
-        .enumerate()
-        .for_each(|(i, y)|
-            *y = 1.0 / i as f64 / (rand::random_range(-10.0..10.0) * (1./std::f64::consts::PI))
-        );
+        .for_each(|(i, m)| {
+            let extra_dense = rand::random_bool(0.0314);
+            if extra_dense {
+                *m = std::f64::consts::PI * rand::random_range(64.0..128.0);
+            }
+        });
 
     sim.directions_x.par_iter_mut()
-        .for_each(|y|
-            *y = std::f64::consts::PI * rand::random_range(-0.25..0.25)
+        .for_each(|x|
+            *x = rand::random_range(-0.25..0.25) * std::f64::consts::PI
         );
     sim.directions_y.par_iter_mut()
         .for_each(|y|
-            *y = std::f64::consts::PI * rand::random_range(-0.25..0.25)
+            *y = rand::random_range(-0.25..0.25) * std::f64::consts::PI
         );
 
     let physics_sim = PhysicsSim(sim);
@@ -74,6 +74,7 @@ pub fn update_simulation(
             let x = sim_res.0.positions_x[particle_id.0];
             let y = sim_res.0.positions_y[particle_id.0];
             transform.translation = Vec3::new(x as f32, y as f32, -2.0);
+            transform.rotation = Quat::from_rotation_y((sim_res.0.directions_x[particle_id.0] as f32 * sim_res.0.directions_y[particle_id.0] as f32) * 1./std::f32::consts::PI);
         });
 }
 
@@ -92,22 +93,26 @@ pub fn update_forces(
         .collect();
 
     // 2. Define a quad that bounds the simulation (adjust as needed)
-    let bounding_quad = Quad { cx: 0.0, cy: 0.0, half_size: 0.5 / std::f64::consts::PI };
+    let bounding_quad = Quad { cx: 0.0, cy: 0.0, half_size: (800. * std::f64::consts::PI) / (600. * std::f64::consts::PI)};
 
     // 3. Build the Barnes–Hut tree
     let tree = build_tree(&particles, bounding_quad);
 
     // Barnes–Hut parameters
-    let theta = std::f64::consts::FRAC_2_SQRT_PI; // controls approximation accuracy
-    let g = 0.314;
+    let theta = 3.14; // controls approximation accuracy
+    let g = 1. / std::f64::consts::PI;
 
-    let mut mutex_sim_res = AtomicPtr::new(sim_res.deref_mut());
+    let mut ptr_sim_res = AtomicPtr::new(sim_res.deref_mut());
 
     // 4. For each particle, compute net force and update velocity/position.
     (0..particle_count)
         .into_par_iter()
         .for_each(|i| {
-            let sim_res = unsafe { &mut *mutex_sim_res.load(std::sync::atomic::Ordering::Relaxed) };
+            // This works here for 3 reasons (as I understand it, please correct me if I'm wrong):
+            // 1. the simulation resource is never dropped
+            // 2. we are never changing the resource itself, only the data it points to
+            // 3. the data that is being changed is not being accessed by any other thread at the same time
+            let sim_res = unsafe { &mut *ptr_sim_res.load(std::sync::atomic::Ordering::Relaxed) };
             let p = ParticleData {
                 x: sim_res.0.positions_x[i],
                 y: sim_res.0.positions_y[i],
@@ -130,7 +135,7 @@ pub fn update_forces(
             let new_vy = vy + ay * sim_res.0.dt;
 
             // Recompute speed and normalize direction.
-            let new_speed = (new_vx * new_vx + new_vy * new_vy).sqrt().log(g);
+            let new_speed = ((new_vx * new_vx) + (new_vy * new_vy)).sqrt().log(g);
             sim_res.0.speeds[i] = new_speed;
             if new_speed != 0.0 {
                 sim_res.0.directions_x[i] = new_vx / new_speed;
@@ -141,7 +146,6 @@ pub fn update_forces(
             sim_res.0.positions_x[i] += new_vx * sim_res.0.dt;
             sim_res.0.positions_y[i] += new_vy * sim_res.0.dt;
         });
-
 }
 
 pub fn spawn_particles(
