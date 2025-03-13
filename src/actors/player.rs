@@ -8,20 +8,20 @@ use bevy::window::WindowRef;
 use rs_physics::forces::Force;
 use rs_physics::interactions::elastic_collision_2d;
 use rs_physics::models::{ObjectIn2D, Velocity2D};
-use rs_physics::utils::{DEFAULT_PHYSICS_CONSTANTS, PhysicsConstants};
+use rs_physics::utils::{DEFAULT_PHYSICS_CONSTANTS, fast_atan2, PhysicsConstants};
 use crate::hud::{EnergyBar, HpBar, ShieldBar};
 use crate::state::MainGameState;
 
 pub(crate) const GROUND_LEVEL: f64 = -300.0;
 
 const PHYSICS_CONSTANTS: PhysicsConstants = PhysicsConstants {
-    gravity: DEFAULT_PHYSICS_CONSTANTS.gravity / 2.0,
+    gravity: 0.0,
     ground_level: GROUND_LEVEL,
     ..DEFAULT_PHYSICS_CONSTANTS
 };
 
 #[derive(Component)]
-pub struct PhysicsSystem2D(rs_physics::forces::PhysicsSystem2D);
+pub struct PhysicsSystem2D(pub rs_physics::forces::PhysicsSystem2D);
 
 impl PhysicsSystem2D {
     fn new(constants: PhysicsConstants, player_object: ObjectIn2D) -> Self {
@@ -53,7 +53,7 @@ pub fn setup_player(
 ) {
     // Player - updated to use the new ObjectIn2D::new with velocity components
     let player_object = ObjectIn2D::new(65.0, 0.0, 0.0, (-200.0, GROUND_LEVEL + 100.0));
-    let player_color = Color::srgb(0.5, 1.0, 0.5);
+    let player_color = Color::srgb(0.1, 0.1, 0.1);
 
     commands
         .spawn((
@@ -63,7 +63,7 @@ pub fn setup_player(
             ),
             MeshMaterial2d(materials.add(player_color)),
             Transform {
-                translation: Vec3::new(-200.0, GROUND_LEVEL as f32 + 60.0, -1.0),
+                translation: Vec3::new(-200.0, GROUND_LEVEL as f32 + 60.0, 1.0),
                 ..Default::default()
             },
             Anchor::BottomCenter,
@@ -239,72 +239,100 @@ pub fn player_input(
     let mut physics_system = player_query.iter_mut()
         .next()
         .expect("There should only be one player entity");
+    let base_magnitude = 200.0;
 
-    if keyboard_input.just_pressed(KeyCode::Space) {
-        if game_state.player_energy <= 0.0 {
-            return;
-        }
-
+    // if keyboard_input.just_pressed(KeyCode::Space) {
+    //     if game_state.player_energy <= 0.0 {
+    //         return;
+    //     }
+    //
+    //     let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
+    //     if player_phys_obj.position.y <= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
+    //         // Get the direction of movement from velocity components
+    //         let direction = player_phys_obj.direction();
+    //
+    //         let max_offset = std::f64::consts::FRAC_PI_6; // ~30 degrees
+    //         // Offset angle based on x direction
+    //         let angle_offset = direction.x * max_offset;
+    //         // Subtract offset from π/2 so that if x > 0, jump tilts right (angle becomes < π/2)
+    //         // and if x < 0, jump tilts left (angle becomes > π/2).
+    //         let thrust_angle = std::f64::consts::FRAC_PI_2 - angle_offset;
+    //         let base_magnitude = 9800.0;
+    //
+    //         // Adjust magnitude based on horizontal movement
+    //         let magnitude = if direction.x.abs() != 0.0 {
+    //             base_magnitude * 0.75
+    //         } else {
+    //             base_magnitude
+    //         };
+    //
+    //         player_phys_obj.add_force(Force::Thrust {
+    //             magnitude,
+    //             angle: thrust_angle,
+    //         });
+    //         game_state.player_energy = (game_state.player_energy - 25.0).max(0.0);
+    //     }
+    // }
+    if keyboard_input.pressed(KeyCode::KeyW) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
-        if player_phys_obj.position.y <= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            // Get the direction of movement from velocity components
-            let direction = player_phys_obj.direction();
 
-            let max_offset = std::f64::consts::FRAC_PI_6; // ~30 degrees
-            // Offset angle based on x direction
-            let angle_offset = direction.x * max_offset;
-            // Subtract offset from π/2 so that if x > 0, jump tilts right (angle becomes < π/2)
-            // and if x < 0, jump tilts left (angle becomes > π/2).
-            let thrust_angle = std::f64::consts::FRAC_PI_2 - angle_offset;
-            let base_magnitude = 9800.0;
+        let angle = std::f64::consts::FRAC_PI_2;
 
-            // Adjust magnitude based on horizontal movement
-            let magnitude = if direction.x.abs() != 0.0 {
-                base_magnitude * 0.75
-            } else {
-                base_magnitude
-            };
-
-            player_phys_obj.add_force(Force::Thrust {
-                magnitude,
-                angle: thrust_angle,
-            });
-            game_state.player_energy = (game_state.player_energy - 25.0).max(0.0);
-        }
-    }
-
-    if keyboard_input.pressed(KeyCode::KeyA) {
-        let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
-
-        // Calculate ground tangent for appropriate movement angle
-        let tangent = ground_tangent(player_phys_obj.position.x as f32);
-        // Compute the angle from the left tangent vector
-        let angle = VectorSpace::lerp(tangent.1, tangent.0, time.delta_secs()).to_radians();
-
-        // Adjust force magnitude based on position
-        let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            -100.0
+        let magnitude = if player_phys_obj.velocity.x.abs() > 0.0 {
+            base_magnitude * 0.75
         } else {
-            -280.0
+            base_magnitude
         };
 
         // Apply thrust along this angle
         player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
     }
 
+    if keyboard_input.pressed(KeyCode::KeyA) {
+        let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
+
+        // Calculate ground tangent for appropriate movement angle
+        // let tangent = ground_tangent(player_phys_obj.position.x as f32);
+        // // Compute the angle from the left tangent vector
+        // let angle = VectorSpace::lerp(tangent.1, tangent.0, time.delta_secs()).to_radians();
+
+        let magnitude = if player_phys_obj.velocity.y.abs() > 0.0 {
+            base_magnitude * 0.75
+        } else {
+            base_magnitude
+        };
+
+        // Apply thrust along this angle
+        player_phys_obj.add_force(Force::Thrust { magnitude, angle: std::f64::consts::PI });
+    }
+
     if keyboard_input.pressed(KeyCode::KeyD) {
         let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
 
-        let tangent = ground_tangent(player_phys_obj.position.x as f32);
-        // Compute the angle from the tangent vector
-        let angle = VectorSpace::lerp(tangent.1, tangent.0, time.delta_secs()).to_radians();
+        // let tangent = ground_tangent(player_phys_obj.position.x as f32);
+        // // Compute the angle from the tangent vector
+        // let angle = VectorSpace::lerp(tangent.1, tangent.0, time.delta_secs()).to_radians();
 
-        let magnitude = if player_phys_obj.position.y >= calculate_ground_level(player_phys_obj.position.x) + 5.0 {
-            100.0
+        let magnitude = if player_phys_obj.velocity.y.abs() > 0.0 {
+            base_magnitude * 0.75
         } else {
-            280.0
+            base_magnitude
         };
 
+        player_phys_obj.add_force(Force::Thrust { magnitude, angle: 0.0_f64 });
+    }
+
+    if keyboard_input.pressed(KeyCode::KeyS) {
+        let player_phys_obj = physics_system.0.get_object_mut(0).unwrap();
+
+        // Compute the angle from the tangent vector
+        let angle = -std::f64::consts::FRAC_PI_2;
+
+        let magnitude = if player_phys_obj.velocity.x.abs() > 0.0 {
+            base_magnitude * 0.75
+        } else {
+            base_magnitude
+        };
         player_phys_obj.add_force(Force::Thrust { magnitude, angle: angle as f64 });
     }
 }
