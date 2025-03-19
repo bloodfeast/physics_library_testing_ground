@@ -4,3 +4,4 @@ pub mod enemy;
 pub mod black_hole;
 pub mod distortion;
 pub mod gravitational_lensing;
+pub mod space_time_rip;

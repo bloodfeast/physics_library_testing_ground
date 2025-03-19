@@ -12,9 +12,16 @@ pub struct EnergyBar;
 #[derive(Component)]
 pub struct ShieldBar;
 
+#[derive(Component)]
+pub struct ScoreCounter;
+
 pub fn setup_hud(
     mut commands: Commands,
+    window_query: Query<&Window>,
 ) {
+    let window = window_query.get_single().unwrap_or_else(|_| panic!("No window found"));
+    let window_half_width = window.width() * 0.5;
+    let window_half_height = window.height() * 0.5;
 
     // Shield Bar
     commands.spawn((
@@ -26,7 +33,7 @@ pub fn setup_hud(
             ..Default::default()
         },
         Transform {
-            translation: Vec3::new(-400.0, 280.0, 1.0),
+            translation: Vec3::new(-window_half_width + 50.0, window_half_height - 50.0, 10.0),
             ..Default::default()
         },
     ));
@@ -41,7 +48,7 @@ pub fn setup_hud(
             ..Default::default()
         },
         Transform {
-            translation: Vec3::new(-400.0, 260.0, 1.0),
+            translation: Vec3::new(-window_half_width + 50.0, window_half_height - 70.0, 10.0),
             ..Default::default()
         },
     ));
@@ -56,11 +63,19 @@ pub fn setup_hud(
             ..Default::default()
         },
         Transform {
-            translation: Vec3::new(-400.0, 240.0, 1.0),
+            translation: Vec3::new(-window_half_width + 50.0, window_half_height - 90.0,  10.0),
             ..Default::default()
         },
     ));
 
+    commands.spawn((
+        ScoreCounter,
+        Text2d("Score ".to_string()),
+        Transform {
+            translation: Vec3::new(window_half_width - 100.0, window_half_height - 50.0,  10.0),
+            ..Default::default()
+        },
+    ));
 }
 
 pub fn update_shield(
@@ -85,4 +100,12 @@ pub fn update_energy(
 ) {
     let mut energy_transform = query.get_single_mut().unwrap();
     energy_transform.scale.x =  (game_state.player_energy / 100.0).max(0.0);
+}
+
+pub fn update_score(
+    mut query: Query<&mut Text2d, With<ScoreCounter>>,
+    game_state: Res<MainGameState>
+) {
+    let mut score_text = query.get_single_mut().unwrap();
+    score_text.0 = format!("Score: {:?}", game_state.score);
 }

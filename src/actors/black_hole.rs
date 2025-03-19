@@ -83,8 +83,8 @@ fn setup_black_hole(
 
     if let Ok(player_entity) = player_result {
         // Create a mesh for the black hole effect
-        let size = 150.0; // Larger size for better lensing effect
-        let mesh = Mesh2d(meshes.add(Rectangle::new(size, size)));
+        let size = 60.0; // Larger size for better lensing effect
+        let mesh = Mesh2d(meshes.add(Circle::new(size)));
 
 
         // Create the black hole material with default settings
@@ -131,6 +131,8 @@ fn update_black_hole_material(
     time: Res<Time>,
     player_query_bh: Query<&BlackHoleEffect>,
     player_query: Query<&PhysicsSystem2D>,
+    mut player_transform_query: Query<&mut Transform, (With<Player>, Without<BlackHoleMaterialMarker>)>,
+    mut black_hole_transform_query: Query<&mut Transform, (With<BlackHoleMaterialMarker>, Without<Player>)>,
     game_state: Res<MainGameState>,
 ) {
     let player = player_query
@@ -140,6 +142,11 @@ fn update_black_hole_material(
     let player_phys = &player.0
         .get_object(0)
         .expect("Player physics not found");
+
+    let mut player_transform = player_transform_query.get_single_mut()
+        .expect("There should only be one player");
+    let mut bh_transform = black_hole_transform_query.get_single_mut()
+        .expect("There should only be one black hole");
 
     let player_speed = player_phys.speed() as f32;
 
@@ -172,8 +179,11 @@ fn update_black_hole_material(
                 material.properties.glow_color = Vec4::new(1.0, 0.3, 0.2, 1.0);
             }
 
+            player_transform.scale = Vec3::new(1.0 + (game_state.score as f32) * 0.001, 1.0 + (game_state.score as f32) * 0.001, 1.0);
+            bh_transform.scale = Vec3::new(1.0 + (game_state.score as f32) * 0.001, 1.0 + (game_state.score as f32) * 0.001, 1.0);
+
             // Adjust rotation speed based on player energy
-            material.properties.rotation_speed = (player_speed * 0.2) + std::f32::consts::PI;
+            material.properties.rotation_speed = (player_speed * 0.5) + std::f32::consts::PI;
         }
     }
 }

@@ -9,6 +9,7 @@ use bevy::render::RenderPlugin;
 use bevy::render::settings::{Backends, MemoryHints, RenderCreation, WgpuSettings};
 use crate::actors::black_hole::{BlackHolePlugin};
 use crate::actors::distortion::{DistortionPostProcessPlugin};
+use crate::props::walls::WallsPlugin;
 use crate::window_plugin::{CustomWindowPlugin, WindowConfig};
 
 fn main() {
@@ -33,6 +34,7 @@ fn main() {
     );
     app.add_plugins(BlackHolePlugin);
     app.add_plugins(DistortionPostProcessPlugin);
+    app.add_plugins(WallsPlugin);
 
 
     app
@@ -45,6 +47,7 @@ fn main() {
             actors::player::setup_camera,
             actors::player::setup_player,
             actors::particles::spawn_particles,
+            props::walls::spawn_space_time_walls,
         ))
         .add_systems(FixedUpdate, (
             actors::enemy::spawn_enemy,
@@ -63,6 +66,7 @@ fn main() {
             hud::update_energy,
             hud::update_hp,
             hud::update_shield,
+            hud::update_score,
         ))
         .run();
 }

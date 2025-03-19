@@ -91,7 +91,7 @@ pub fn update_enemy(
 
     let player_x = player_transform.translation.x as f64;
     let player_y = player_transform.translation.y as f64;
-    let player_mass = 1000000.0; // Adjust this to control gravitational strength
+    let player_mass = 1000000.0 * (game_state.score as f64 * 0.5).max(1.0); // Adjust this to control gravitational strength
 
     query.iter_mut()
         .for_each(|(entity, mut transform, mut enemy)| {
@@ -218,6 +218,7 @@ pub fn update_enemy(
                 } else {
                     game_state.player_hp -= 10.0;
                 }
+                game_state.score += 1;
 
                 // Remove the enemy upon collision
                 game_state.enemies.retain(|&id| id != entity);
