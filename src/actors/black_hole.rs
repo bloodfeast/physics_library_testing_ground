@@ -96,7 +96,7 @@ fn setup_black_hole(
                 distortion_strength: 5.0,                   // Gravitational distortion strength
                 rotation_speed: 0.5,                        // Speed of rotation
                 time: 0.0,                                  // Initial time
-                glow_color: Vec4::new(0.2, 0.7, 1.0, 1.0),  // Blue-ish glow
+                glow_color: Vec4::new(0.2, 0.7, 1.0, 1.0),
             },
         });
 
@@ -137,7 +137,10 @@ fn update_black_hole_material(
         .get_single()
         .expect("Player not found");
 
-    let player_phys = &player.0.get_object(0).expect("Player physics not found");
+    let player_phys = &player.0
+        .get_object(0)
+        .expect("Player physics not found");
+
     let player_speed = player_phys.speed() as f32;
 
     for effect in player_query_bh.iter() {

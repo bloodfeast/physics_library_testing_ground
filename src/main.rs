@@ -1,27 +1,35 @@
 mod actors;
 mod state;
 mod hud;
+mod props;
+mod window_plugin;
 
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::settings::{Backends, MemoryHints, RenderCreation, WgpuSettings};
 use crate::actors::black_hole::{BlackHolePlugin};
 use crate::actors::distortion::{DistortionPostProcessPlugin};
-use crate::actors::gravitational_lensing::LensingPlugin;
+use crate::window_plugin::{CustomWindowPlugin, WindowConfig};
 
 fn main() {
-   let mut app = App::new();
+    let mut app = App::new();
+    let default_window_config = WindowConfig::default();
+    let window_plugin = CustomWindowPlugin::new(default_window_config);
+
     app.add_plugins(
-        DefaultPlugins.set(
-            RenderPlugin {
-                render_creation: RenderCreation::Automatic(WgpuSettings {
-                    backends: Some(Backends::DX12),
-                    memory_hints: MemoryHints::Performance,
+        DefaultPlugins
+            .set(
+                RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings {
+                        backends: Some(Backends::DX12),
+                        memory_hints: MemoryHints::Performance,
+                        ..default()
+                    }),
                     ..default()
-                }),
-                ..default()
-            },
-        ),
+                },
+            )
+            .disable::<WindowPlugin>()
+            .add(window_plugin)
     );
     app.add_plugins(BlackHolePlugin);
     app.add_plugins(DistortionPostProcessPlugin);

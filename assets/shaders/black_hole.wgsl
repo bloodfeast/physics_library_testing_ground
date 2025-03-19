@@ -78,8 +78,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // CRITICAL: Use much stronger colors with reduced brightness
     // Pure white tends to dominate when colors add together
-    let deep_orange = vec4<f32>(1.0, 0.4, 0.0, 1.0) * 0.6;  // Deep orange with reduced intensity
-    let off_white = vec4<f32>(1.0, 0.9, 0.8, 1.0) * 0.7;    // Slightly off-white with reduced intensity
+    let deep_orange = vec4<f32>(properties.glow_color.x, properties.glow_color.y, 0.0, 1.0) * 0.6;  // Deep orange with reduced intensity
+    let off_white = vec4<f32>(properties.glow_color.x, properties.glow_color.y, 0.8, 1.0) * 0.7;    // Slightly off-white with reduced intensity
 
     // Use non-linear gradient for more obvious transition
     let gradient_pos = pow((dist - event_horizon_radius) / (properties.accretion_radius - event_horizon_radius), 2.0);

@@ -84,7 +84,11 @@ pub fn update_enemy(
     time: Res<Time>,
 ) {
     // Get player position for gravitational calculations
-    let player_transform = player_query.iter().next().expect("There should only be one player entity");
+    let player_transform = player_query
+        .iter()
+        .next()
+        .expect("There should only be one player entity");
+
     let player_x = player_transform.translation.x as f64;
     let player_y = player_transform.translation.y as f64;
     let player_mass = 1000000.0; // Adjust this to control gravitational strength
@@ -94,7 +98,10 @@ pub fn update_enemy(
             let mut enemy: &mut Enemy = &mut enemy;
 
             // Apply gravitational force toward player
-            let enemy_object = enemy.0.get_object_mut(0).unwrap();
+            let enemy_object = enemy.0
+                .get_object_mut(0)
+                .expect("Failed to get enemy object");
+
             let dx = player_x - enemy_object.position.x;
             let dy = player_y - enemy_object.position.y;
             let distance_squared = dx * dx + dy * dy;

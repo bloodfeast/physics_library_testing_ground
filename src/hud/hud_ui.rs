@@ -20,7 +20,7 @@ pub fn setup_hud(
     commands.spawn((
         ShieldBar,
         Sprite {
-            color: Color::rgb(0.25, 0.65, 1.0).into(),
+            color: Color::srgb(0.25, 0.65, 1.0).into(),
             custom_size: Some(Vec2::new(300.0, 10.0)),
             anchor: Anchor::CenterLeft,
             ..Default::default()
@@ -35,7 +35,7 @@ pub fn setup_hud(
     commands.spawn((
         HpBar,
         Sprite {
-            color: Color::rgb(1.0, 0.0, 0.0).into(),
+            color: Color::srgb(1.0, 0.0, 0.0).into(),
             custom_size: Some(Vec2::new(300.0, 10.0)),
             anchor: Anchor::CenterLeft,
             ..Default::default()
@@ -50,7 +50,7 @@ pub fn setup_hud(
     commands.spawn((
         EnergyBar,
         Sprite {
-            color: Color::rgb(0.0, 1.0, 0.0).into(),
+            color: Color::srgb(0.0, 1.0, 0.0).into(),
             custom_size: Some(Vec2::new(300.0, 10.0)),
             anchor: Anchor::CenterLeft,
             ..Default::default()
