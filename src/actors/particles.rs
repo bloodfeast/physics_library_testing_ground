@@ -1,173 +1,363 @@
-use std::ops::DerefMut;
-use std::sync::atomic::AtomicPtr;
-use std::sync::Mutex;
-use bevy::asset::AssetContainer;
+// Optimized particles.rs with Structure of Arrays (SoA) implementation
+
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use rs_physics::particles::{build_tree, compute_net_force, ParticleData, Quad, Simulation};
-use rs_physics::utils::{DEFAULT_PHYSICS_CONSTANTS, PhysicsConstants};
 use rayon::prelude::*;
+use rs_physics::particles::particle_interactions_barnes_hut_cosmological::{
+    Particle, Quad as BHQuad, ParticleCollection,
+    create_big_bang_particles_soa, modify_particle_masses_soa,
+    simulate_step_soa
+};
+use rs_physics::models::Velocity2D;
+use rs_physics::utils::fast_atan2;
 
 #[derive(Resource)]
-pub struct PhysicsSim(Simulation);
+pub struct CosmologicalSimulation {
+    particle_collection: ParticleCollection,
+    bounds: BHQuad,
+    time: f64,
+    dt: f64,
+    theta: f64,
+    g: f64,
+    initial_radius: f64,
+}
 
+impl CosmologicalSimulation {
+    pub fn new(
+        num_particles: usize,
+        initial_radius: f64,
+        dt: f64,
+        theta: f64,
+        g: f64
+    ) -> Self {
+        // Create bounding quad that encompasses the simulation area
+        let bounds = BHQuad {
+            cx: 0.0,
+            cy: 0.0,
+            half_size: initial_radius * 800.0  // Add some buffer around the simulation
+        };
+
+        // Create particles in a Big Bang configuration using SoA
+        let particle_collection = create_big_bang_particles_soa(num_particles, initial_radius as f32);
+
+        Self {
+            particle_collection,
+            bounds,
+            time: 0.0,
+            dt,
+            theta,
+            g,
+            initial_radius,
+        }
+    }
+
+    pub fn optimize_for_orbits(&mut self) {
+        // Find massive bodies (those with mass > 1000.0)
+        let mut massive_indices = Vec::new();
+        for i in 0..self.particle_collection.count {
+            if self.particle_collection.masses[i] > 1000.0 {
+                massive_indices.push(i);
+            }
+        }
+
+        if massive_indices.is_empty() {
+            return; // No massive bodies to orbit around
+        }
+
+        // Pre-compute orbital zones for massive particles
+        let orbital_zones: Vec<(f32, f32, f32)> = massive_indices.iter()
+            .map(|&i| {
+                // Return position and influence radius based on mass
+                (
+                    self.particle_collection.positions_x[i],
+                    self.particle_collection.positions_y[i],
+                    (self.particle_collection.masses[i].sqrt() * 0.2)
+                )
+            })
+            .collect();
+
+        // Tag particles that are in orbital zones by adjusting their density
+        // (No parallelization here since it's just a one-time setup operation)
+        for i in 0..self.particle_collection.count {
+            // Skip massive bodies themselves
+            if self.particle_collection.masses[i] >= 100.0 {
+                continue;
+            }
+
+            // Check if this particle is in an orbital zone
+            let px = self.particle_collection.positions_x[i];
+            let py = self.particle_collection.positions_y[i];
+
+            for &(center_x, center_y, radius) in &orbital_zones {
+                let dx = px - center_x;
+                let dy = py - center_y;
+                let dist_sq = dx * dx + dy * dy;
+
+                if dist_sq < radius * radius {
+                    // In orbit - adjust density for visualization
+                    self.particle_collection.densities[i] = self.particle_collection.densities[i].max(0.8);
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn step(&mut self) {
+        // Execute the simulation step with all parameters
+        simulate_step_soa(
+            &mut self.particle_collection,
+            self.bounds,
+            self.theta as f32,
+            self.g as f32,
+            self.dt as f32,
+            self.time as f32
+        );
+
+        // Apply orbital mechanics (handled by the modified simulate_step_soa)
+        self.apply_orbital_mechanics();
+
+        // Update simulation time
+        self.time += self.dt;
+    }
+
+    fn apply_orbital_mechanics(&mut self) {
+        // Pre-calculate orbital factors
+        let particle_count = self.particle_collection.count;
+        let orbital_factors: Vec<f32> = (0..particle_count)
+            .map(|i| (self.particle_collection.masses[i] / 1000.0).min(10.0).max(0.1))
+            .collect();
+
+        // Process in smaller batches for better cache locality
+        let chunk_size = 4096.min(particle_count);
+
+        for chunk_start in (0..particle_count).step_by(chunk_size) {
+            let chunk_end = (chunk_start + chunk_size).min(particle_count);
+
+            for i in chunk_start..chunk_end {
+                // Get particle data
+                let vx = self.particle_collection.velocities_x[i];
+                let vy = self.particle_collection.velocities_y[i];
+                let mass = self.particle_collection.masses[i];
+
+                // Skip massive bodies and nearly stationary particles
+                if mass >= 1000.0 || (vx * vx + vy * vy) < 1e-6 {
+                    continue;
+                }
+
+                // Calculate velocity magnitude
+                let vel_magnitude = (vx * vx + vy * vy).sqrt();
+
+                // Calculate orbital adjustment
+                let orbital_strength = 0.75 * orbital_factors[i] * 0.01;
+                let perpendicular_vx = -vy * orbital_strength;
+                let perpendicular_vy = vx * orbital_strength;
+
+                // Calculate optimal orbit speed and speed difference
+                let optimal_orbit_speed = (mass / 1000.0).sqrt() * 0.2;
+                let speed_diff = (vel_magnitude - optimal_orbit_speed).abs();
+
+                // Determine drag strength based on current speed
+                let drag_strength = if vel_magnitude > optimal_orbit_speed {
+                    speed_diff * 0.015  // Slow down faster particles
+                } else if vel_magnitude < optimal_orbit_speed * 0.314 {
+                    -speed_diff * 0.05  // Speed up very slow particles
+                } else {
+                    speed_diff * 0.001  // Minimal drag in the "orbital zone"
+                };
+
+                // Calculate drag components
+                let speed_reciprocal = if vel_magnitude > 0.0001 { 1.0 / vel_magnitude } else { 0.0 };
+                let drag_vx = -vx * speed_reciprocal * drag_strength;
+                let drag_vy = -vy * speed_reciprocal * drag_strength;
+
+                // Apply velocity adjustments
+                self.particle_collection.velocities_x[i] += perpendicular_vx + drag_vx;
+                self.particle_collection.velocities_y[i] += perpendicular_vy + drag_vy;
+            }
+        }
+    }
+
+    pub fn modify_particle_masses(&mut self) {
+        // Use the SoA implementation to modify masses
+        modify_particle_masses_soa(&mut self.particle_collection);
+    }
+
+    pub fn get_particle_count(&self) -> usize {
+        self.particle_collection.count
+    }
+
+    // Efficient particle accessor that avoids unnecessary conversions
+    pub fn get_particle(&self, index: usize) -> Particle {
+        Particle {
+            position: (
+                self.particle_collection.positions_x[index] as f64,
+                self.particle_collection.positions_y[index] as f64
+            ),
+            velocity: Velocity2D {
+                x: self.particle_collection.velocities_x[index] as f64,
+                y: self.particle_collection.velocities_y[index] as f64
+            },
+            mass: self.particle_collection.masses[index] as f64,
+            spin: self.particle_collection.spins[index] as f64,
+            age: self.particle_collection.ages[index] as f64,
+            density: self.particle_collection.densities[index] as f64
+        }
+    }
+}
+
+// Particle identifier component
+#[derive(Component)]
+pub struct ParticleId(usize);
+
+// Bevy systems
+
+// Setup system - initialize the simulation
 pub fn setup(
     mut commands: Commands,
     time: Res<Time<Fixed>>,
 ) {
-    // Initialize physics constants and simulation parameters
-    let constants = PhysicsConstants {
-        gravity: 0.0,
-        air_density: 0.0,
-        ..DEFAULT_PHYSICS_CONSTANTS
-    };
 
-    let mut sim = Simulation::new(
-        128_000,               // number of particles
-        (0.0, 0.0),         // initial position
-        -486.,               // initial speed
-        (0.0, 0.25),         // initial direction
-        std::f64::consts::PI * rand::random_range(10.0..=60.0),                // mass
-        constants,
-        time.timestep().as_secs_f64(),              // time step (0.0016 is essentially slowing down the simulation, ~0.16 looks more natural imo) but this creates that cool 'big bang' effect
-    )
-        .expect("Failed to create simulation");
+    // Initialize simulation with parameters tuned for performance
+    let num_particles = 24_000;  // Adjust based on your performance requirements
+    let initial_radius = 8.0 * std::f64::consts::PI.ln_1p();
+    let dt = time.timestep().as_secs_f64();
+    let theta = 0.85;  // Barnes-Hut approximation parameter
+    let g = 1.0 / std::f64::consts::PI;  // Gravitational constant
 
+    info!("Creating simulation with {} particles", num_particles);
+    let start_time = std::time::Instant::now();
 
-    sim.masses.par_iter_mut()
-        .enumerate()
-        .for_each(|(i, m)| {
-            let extra_dense = rand::random_bool(0.0314);
-            if extra_dense {
-                *m = std::f64::consts::PI * rand::random_range(64.0..128.0);
-            }
-        });
+    let mut simulation = CosmologicalSimulation::new(
+        num_particles,
+        initial_radius,
+        dt,
+        theta,
+        g
+    );
 
-    sim.directions_x.par_iter_mut()
-        .for_each(|x|
-            *x = rand::random_range(-0.25..0.25) * std::f64::consts::PI
-        );
-    sim.directions_y.par_iter_mut()
-        .for_each(|y|
-            *y = rand::random_range(-0.25..0.25) * std::f64::consts::PI
-        );
+    // Set up particle masses
+    simulation.modify_particle_masses();
 
-    let physics_sim = PhysicsSim(sim);
-    commands.insert_resource(physics_sim);
+    // Set up orbital dynamics
+    simulation.optimize_for_orbits();
 
-    // Optionally, spawn Bevy entities for visualization
+    info!("Simulation created in {:.2?}", start_time.elapsed());
+
+    // Add the simulation as a resource
+    commands.insert_resource(simulation);
 }
 
-#[derive(Component)]
-pub struct ParticleId(usize);
-
+// Update simulation system - advances physics and updates entities
 pub fn update_simulation(
-    mut sim_res: ResMut<PhysicsSim>,
-    mut query: Query<(&mut Transform, &ParticleId)>,
+    mut sim_res: ResMut<CosmologicalSimulation>,
+    mut query: Query<(&mut Transform, &mut Visibility, &ParticleId)>,
 ) {
-    // Advance the simulation one time step
-    sim_res.0.step().expect("Simulation step failed");
+    // Advance the simulation
+    let sim_start = std::time::Instant::now();
+    sim_res.step();
+    let sim_duration = sim_start.elapsed();
 
-    // Update each entity’s transform using the simulation’s positions.
-    query.par_iter_mut()
-        .for_each(|(mut transform, particle_id)| {
-            let x = sim_res.0.positions_x[particle_id.0];
-            let y = sim_res.0.positions_y[particle_id.0];
-            transform.translation = Vec3::new(x as f32, y as f32, -2.0);
-            transform.rotation = Quat::from_rotation_y((sim_res.0.directions_x[particle_id.0] as f32 * sim_res.0.directions_y[particle_id.0] as f32) * 1./std::f32::consts::PI);
-        });
+    // Skip rendering update if simulation took too long (slow frames)
+    if sim_duration > std::time::Duration::from_millis(64) {
+        warn!("Simulation step too slow: {:.2?}", sim_duration);
+        return;
+    }
+
+    // Rendering constants
+    let visible_radius = 4092.0_f64;
+
+    query.iter_mut().for_each(|(mut transform, mut visibility, particle_id)| {
+        // Skip if ID is out of bounds
+        if particle_id.0 >= sim_res.get_particle_count() {
+            return;
+        }
+
+        // Skip already hidden particles
+        if *visibility == Visibility::Hidden {
+            return;
+        }
+
+        // Get particle data
+        let particle = sim_res.get_particle(particle_id.0);
+
+        // Check if particle is worth rendering
+        let dist_squared = particle.position.0.powi(2) + particle.position.1.powi(2);
+        if dist_squared > visible_radius.powi(2) {
+            // Make invisible to skip rendering
+            *visibility = Visibility::Hidden;
+            return;
+        }
+
+        // Scale based on mass
+        let scale_factor = (particle.mass.log10() * 0.75).max(1.0).min(10.0) as f32;
+
+        // Update transform
+        transform.translation.x = particle.position.0 as f32;
+        transform.translation.y = particle.position.1 as f32;
+
+        // Update rotation
+        let direction = particle.velocity.direction();
+        let rotation_angle = fast_atan2(direction.y as f32, direction.x as f32);
+        let spin_factor = (particle.spin as f32 * 0.75).min(std::f32::consts::PI * 2.0);
+        transform.rotation = Quat::from_rotation_z(rotation_angle + spin_factor);
+
+        // Update scale
+        transform.scale = Vec3::splat(scale_factor);
+    });
 }
 
-pub fn update_forces(
-    mut sim_res: ResMut<PhysicsSim>,
-) {
-    // 1. Convert simulation arrays into a Vec<ParticleData>
-    let particle_count = sim_res.0.positions_x.len();
-    let particles: Vec<ParticleData> = (0..particle_count)
-        .into_par_iter()
-        .map(|i| ParticleData {
-            x: sim_res.0.positions_x[i],
-            y: sim_res.0.positions_y[i],
-            mass: sim_res.0.masses[i],
-        })
-        .collect();
-
-    // 2. Define a quad that bounds the simulation (adjust as needed)
-    let bounding_quad = Quad { cx: 0.0, cy: 0.0, half_size: (800. * std::f64::consts::PI) / (600. * std::f64::consts::PI)};
-
-    // 3. Build the Barnes–Hut tree
-    let tree = build_tree(&particles, bounding_quad);
-
-    // Barnes–Hut parameters
-    let theta = 3.14; // controls approximation accuracy
-    let g = 1. / std::f64::consts::PI;
-
-    let mut ptr_sim_res = AtomicPtr::new(sim_res.deref_mut());
-
-    // 4. For each particle, compute net force and update velocity/position.
-    (0..particle_count)
-        .into_par_iter()
-        .for_each(|i| {
-            // This works here for 3 reasons (as I understand it, please correct me if I'm wrong):
-            // 1. the simulation resource is never dropped
-            // 2. we are never changing the resource itself, only the data it points to
-            // 3. the data that is being changed is not being accessed by any other thread at the same time
-            let sim_res = unsafe { &mut *ptr_sim_res.load(std::sync::atomic::Ordering::Relaxed) };
-            let p = ParticleData {
-                x: sim_res.0.positions_x[i],
-                y: sim_res.0.positions_y[i],
-                mass: sim_res.0.masses[i],
-            };
-
-            // Compute the net force from the Barnes–Hut tree.
-            let (force_x, force_y) = compute_net_force(&tree, p, theta, g);
-
-            // Compute acceleration: a = F / m.
-            let ax = force_x / p.mass;
-            let ay = force_y / p.mass;
-
-            // Recover the current velocity components.
-            let vx = sim_res.0.speeds[i] * sim_res.0.directions_x[i];
-            let vy = sim_res.0.speeds[i] * sim_res.0.directions_y[i];
-
-            // Update velocity with acceleration.
-            let new_vx = vx + ax * sim_res.0.dt;
-            let new_vy = vy + ay * sim_res.0.dt;
-
-            // Recompute speed and normalize direction.
-            let new_speed = ((new_vx * new_vx) + (new_vy * new_vy)).sqrt().log(g);
-            sim_res.0.speeds[i] = new_speed;
-            if new_speed != 0.0 {
-                sim_res.0.directions_x[i] = new_vx / new_speed;
-                sim_res.0.directions_y[i] = new_vy / new_speed;
-            }
-
-            // Update position based on the new velocity.
-            sim_res.0.positions_x[i] += new_vx * sim_res.0.dt;
-            sim_res.0.positions_y[i] += new_vy * sim_res.0.dt;
-        });
-}
-
+// Spawn particles system
 pub fn spawn_particles(
     mut commands: Commands,
-    sim_res: Res<PhysicsSim>,
+    sim_res: Res<CosmologicalSimulation>,
 ) {
-    let particle_count = sim_res.0.positions_x.len();
-    for i in 0..particle_count {
-        let color = Color::hsl(360. * i as f32 / particle_count as f32, rand::random_range(0.45..=1.0), rand::random_range(0.5..=1.0));
-        let x = sim_res.0.positions_x[i] as f32;
-        let y = sim_res.0.positions_y[i] as f32;
-        commands.spawn((
-            Sprite {
-                color,
-                custom_size: Some(Vec2::new(1.0, 1.0)),
-                anchor: Anchor::Center,
-                ..Default::default()
-            },
-            Transform {
-                translation: Vec3::new(x, y, -2.0),
-                ..Default::default()
-            },
-        )).insert(ParticleId(i));
+    let start_time = std::time::Instant::now();
+    let particle_count = sim_res.get_particle_count();
+
+    info!("Spawning {} particles", particle_count);
+
+    // Use batch spawning to reduce memory pressure
+    let batch_size = 2_048; // Smaller batch size to maintain responsiveness
+
+    for batch_start in (0..particle_count).step_by(batch_size) {
+        let batch_end = (batch_start + batch_size).min(particle_count);
+
+        // Prepare batch of commands
+        let mut batch_commands = Vec::with_capacity(batch_end - batch_start);
+
+        for i in batch_start..batch_end {
+            let particle = sim_res.get_particle(i);
+
+            // Calculate color based on particle properties
+            let hue = 360.0 * (i as f32 / particle_count as f32);
+            let saturation = (particle.density as f32 * 0.5).clamp(0.35, 0.65);
+            let lightness = ((particle.age as f32 * 0.01) + 0.5).clamp(0.65, 1.0);
+            let color = Color::hsl(hue, saturation, lightness);
+
+            // Create the entity
+            batch_commands.push((
+                Sprite {
+                    color,
+                    custom_size: Some(Vec2::new(1.0, 1.0)),
+                    anchor: Anchor::Center,
+                    ..Default::default()
+                },
+                Transform {
+                    translation: Vec3::new(
+                        particle.position.0 as f32,
+                        particle.position.1 as f32,
+                        -2.0
+                    ),
+                    scale: Vec3::splat((particle.mass.log10() * 0.85).max(1.0).min(10.0) as f32),
+                    ..Default::default()
+                },
+                ParticleId(i),
+            ));
+        }
+
+        // Spawn all entities in this batch
+        commands.spawn_batch(batch_commands);
     }
+
+    info!("Particles spawned in {:.2?}", start_time.elapsed());
 }
