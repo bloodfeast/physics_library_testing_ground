@@ -6,6 +6,7 @@ pub enum WallShape {
     Rigid,
     Convex(f32),
     Concave(f32),
+    SpaceTimeRip,
 }
 
 pub enum WallInteractionError {
@@ -43,4 +44,62 @@ pub struct Wall {
     pub width: f32,
     pub rotation_angle: f32,
     pub wall_shape: WallShape,
+}
+
+impl Wall {
+    // Helper function to create a space-time rip wall
+    pub fn new_space_time_rip(center_x: f32, center_y: f32, width: f32, height: f32, rotation: f32) -> Self {
+        Wall {
+            center_x,
+            center_y,
+            height,
+            width,
+            rotation_angle: rotation,
+            wall_shape: WallShape::SpaceTimeRip,
+        }
+    }
+
+    // Create a standard rigid wall
+    pub fn new_rigid(center_x: f32, center_y: f32, width: f32, height: f32, rotation: f32) -> Self {
+        Wall {
+            center_x,
+            center_y,
+            height,
+            width,
+            rotation_angle: rotation,
+            wall_shape: WallShape::Rigid,
+        }
+    }
+
+    // Utility function to get corner positions of this wall
+    pub fn get_corners(&self) -> [Vec2; 4] {
+        let half_width = self.width / 2.0;
+        let half_height = self.height / 2.0;
+
+        let cos_angle = self.rotation_angle.cos();
+        let sin_angle = self.rotation_angle.sin();
+
+        // Calculate the four corners
+        let top_left = Vec2::new(
+            self.center_x - half_width * cos_angle + half_height * sin_angle,
+            self.center_y - half_width * sin_angle - half_height * cos_angle
+        );
+
+        let top_right = Vec2::new(
+            self.center_x + half_width * cos_angle + half_height * sin_angle,
+            self.center_y + half_width * sin_angle - half_height * cos_angle
+        );
+
+        let bottom_right = Vec2::new(
+            self.center_x + half_width * cos_angle - half_height * sin_angle,
+            self.center_y + half_width * sin_angle + half_height * cos_angle
+        );
+
+        let bottom_left = Vec2::new(
+            self.center_x - half_width * cos_angle - half_height * sin_angle,
+            self.center_y - half_width * sin_angle + half_height * cos_angle
+        );
+
+        [top_left, top_right, bottom_right, bottom_left]
+    }
 }
